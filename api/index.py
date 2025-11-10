@@ -4,24 +4,27 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# فعال کردن لاگ‌گیری (برای خطایابی)
+# --- تنظیمات لاگ‌گیری ---
+# این بار لاگ‌گیری را در سطح بالا انجام می‌دهیم تا همه چیز را ثبت کند
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
-# خواندن متغیرهای محرمانه از Vercel
-# ما اینها را بعداً در Vercel تنظیم خواهیم کرد
+# --- خواندن متغیرهای محرمانه ---
+# اینها را از Vercel می‌خوانیم
 TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = os.environ.get('ADMIN_USER_ID')
+ADMIN_USER_ID = os.environ.get('ADMIN_USER_ID')
 
-# تابع برای دستور /start
+# --- توابع ربات ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """پاسخ به دستور /start"""
     user_id = update.message.from_user.id
+    logger.info(f"User {user_id} started the bot.") # اضافه کردن لاگ برای تست
     
-    # بررسی اینکه آیا کاربر، ادمین است یا نه
-    if str(user_id) == ADMIN_ID:
+    # مقایسه ادمین آیدی
+    if str(user_id) == str(ADMIN_USER_ID):
         await update.message.reply_text(
             'سلام ادمین! به پنل مدیریت خوش آمدید. برای نمایش دستورات /admin را بزنید.'
         )
@@ -31,40 +34,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             'لطفاً متن، صدا یا عکسی را برای ترجمه ارسال کنید.'
         )
 
-# تابع اصلی که توسط Vercel اجرا می‌شود
 async def setup_bot():
     """راه‌اندازی و مقداردهی اولیه ربات"""
-    # ساخت اپلیکیشن ربات با توکن
+    if not TOKEN:
+        logger.critical("متغیر BOT_TOKEN پیدا نشد!")
+        raise ValueError("BOT_TOKEN یافت نشد. لطفاً متغیرهای Vercel را چک کنید.")
+        
+    if not ADMIN_USER_ID:
+        logger.warning("متغیر ADMIN_USER_ID پیدا نشد! (پنل ادمین کار نخواهد کرد)")
+
     application = Application.builder().token(TOKEN).build()
 
     # --- ثبت دستورات ---
-    # 1. دستور /start
     application.add_handler(CommandHandler("start", start))
     
-    # (بقیه دستورات مثل ترجمه متن، صوت و پنل ادمین در اینجا اضافه خواهند شد)
+    # (بقیه دستورات در آینده اینجا اضافه می‌شوند)
 
     return application
 
-# این بخش اصلی برای اتصال به Vercel (Serverless Function) است
-# ما به جای "run_polling" از "webhook" استفاده می‌کنیم
-# Vercel این تابع را به عنوان نقطه ورودی می‌شناسد
+# --- تابع اصلی Vercel (اصلاح شده) ---
+
 async def handler(event, context):
-    """تابع اصلی هندلر برای Vercel"""
-    # اول ربات را راه‌اندازی می‌کنیم
-    application = await setup_bot()
+    """تابع اصلی هندلر برای Vercel با مدیریت خطای صحیح"""
     
     try:
-        # درخواست دریافتی از Vercel را به JSON تبدیل می‌کنیم
+        # **اصلاح کلیدی:** راه‌اندازی ربات *داخل* بلوک try قرار گرفت
+        application = await setup_bot()
+        
+        # پردازش درخواست تلگرام
         body = json.loads(event['body'])
         update = Update.de_json(body, application.bot)
         
-        # آپدیت را پردازش می‌کنیم (اینجا تلگرام کارش را انجام می‌دهد)
         await application.process_update(update)
         
-        # پاسخ موفقیت آمیز به Vercel
+        # پاسخ موفقیت آمیز
         return {'statusCode': 200, 'body': 'Success'}
         
     except Exception as e:
-        logger.error(f"Error processing update: {e}")
-        # پاسخ خطا به Vercel
+        # **اصلاح کلیدی:** حالا هر خطایی (از جمله خطای راه‌اندازی) در لاگ ثبت می‌شود
+        logger.error(f"!!! خطای اساسی در هندلر !!!: {e}", exc_info=True)
+        
+        # پاسخ خطا
         return {'statusCode': 500, 'body': 'Internal Server Error'}
